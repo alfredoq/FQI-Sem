@@ -358,7 +358,7 @@ def descargar_ligandos_adrenergicos(receptores, df_ligandos):
 
     for nombre, target_id in receptores.items():
         df = new_client.activity.filter(target_chembl_id=target_id).only([
-            'type', 'units', 'value', 'canonical_smiles', 'molecule_chembl_id', 'target_id'])
+            'type', 'units', 'relation', 'value', 'canonical_smiles', 'molecule_chembl_id', 'target_id', 'document_chembl_id'])
         df = pd.DataFrame(df)
         df['receptor'] = nombre  # Agregar columna para identificar el subtipo
         df['target_id'] = target_id  # Agregar columna para identificar el subtipo
@@ -387,6 +387,14 @@ def descargar_ligandos_adrenergicos(receptores, df_ligandos):
 
     # Eliminar filas sin coincidencia
     df_final = df_final.reset_index(drop=True)
+    
+    columnas_ordenadas = [
+    'receptor', 'molecule_chembl_id', 'canonical_smiles', 'type',
+    'relation', 'value', 'units', 'target_id', 'action_type', 'nombre_comercial','document_chembl_id'
+    ]
+
+    # Reordenar columnas si todas existen
+    df_final = df_final[[col for col in columnas_ordenadas if col in df_final.columns]]
     
     return df_final
 
@@ -451,6 +459,7 @@ def determinar_chemspace(df, smiles_col='canonical_smiles', random_state=4):
 
     df_umap = df.join(chemical_space_data)
     return df_umap
+
 
 
 def graficar_espacio_quimico(df, x='UMAP-1', y='UMAP-2', receptor_col='receptor',
@@ -609,6 +618,14 @@ def aislar_actividad_biologica(df, tipo='IC50'):
 
     # Merge para reconstruir dataframe completo
     df_final = pd.merge(df_resto.drop(columns=[tipo + '_value_nM', 'type', 'units', 'value']), df_prom, on='molecule_chembl_id', how='left')
+    
+    orden_deseado = [
+    'receptor', 'molecule_chembl_id', 'canonical_smiles', 'target_id',
+    'action_type', 'nombre_comercial', 'document_chembl_id', 'UMAP-1', 'UMAP-2',
+    'relation', tipo + '_value_nM']
+
+    df_final = df_final[[col for col in orden_deseado if col in df_final.columns]]
+
 
     return df_final
 
@@ -669,6 +686,10 @@ def graficar_distribucion_descriptores_all(df, columna_inicio, titulo="Distribuc
         columna_inicio (str): Nombre de la columna desde donde empezar a incluir variables.
         titulo (str): Título del gráfico.
     """
+    if "norm" in columna_inicio:
+        df = df[df["IC50_value_nM"]<3100]
+        df = df.drop(columns=[col for col in df.columns if col.endswith('_norm')])
+        df = normalizar_desde_columna(df, "IC50_value_nM")
     # Obtener columnas desde 'columna_inicio' hasta el final
     idx_inicio = df.columns.get_loc(columna_inicio)
     variables = df.columns[idx_inicio:]
@@ -712,9 +733,10 @@ def normalizar_desde_columna(df, columna_inicio, metodo="minmax"):
     datos_escalados = scaler.fit_transform(datos)
     columnas_escaladas = [col + "_norm" for col in columnas_a_normalizar]
     df_scaled = pd.DataFrame(datos_escalados, columns=columnas_escaladas, index=df.index)
-
+    
     # Combinar con el DataFrame original
     return pd.concat([df, df_scaled], axis=1)
+    
 
 
 def mostrar_y_guardar_moleculas_alineadas(df, grupo_funcional_smiles, mols_per_image=50, mols_per_row=10, output_folder='imagenes'):
@@ -827,3 +849,39 @@ def mostrar_moleculas_por_id(df, ids_chembl, grupo_funcional_smiles, mols_per_ro
     
     img = Draw.MolsToGridImage(mols, legends=legends, molsPerRow=mols_per_row, subImgSize=(300, 300), useSVG=False)
     display(img)
+    
+
+def combinar_dataframes(df_base, archivo_csv):
+    """
+    Combina df_base con un DataFrame cargado desde un archivo CSV,
+    asegurando que todas las columnas de df_base estén presentes.
+    
+    Parámetros:
+        df_base (pd.DataFrame): DataFrame original con estructura completa.
+        archivo_csv (str): Ruta al archivo CSV con el segundo DataFrame.
+
+    Retorna:
+        pd.DataFrame combinado.
+    """
+    # Cargar CSV
+    df_nuevo = pd.read_csv(archivo_csv)
+    
+    # Identificar columnas faltantes en cada DataFrame
+    columnas_base = set(df_base.columns)
+    columnas_nuevo = set(df_nuevo.columns)
+
+    faltantes_en_nuevo = columnas_base - columnas_nuevo
+    faltantes_en_base = columnas_nuevo - columnas_base
+
+    # Agregar columnas faltantes con NaNs
+    for col in faltantes_en_nuevo:
+        df_nuevo[col] = pd.NA
+    for col in faltantes_en_base:
+        df_base[col] = pd.NA
+
+    # Reordenar columnas para que coincidan
+    df_nuevo = df_nuevo[df_base.columns]
+
+    # Combinar
+    df_combinado = pd.concat([df_base, df_nuevo], ignore_index=True)
+    return df_combinado

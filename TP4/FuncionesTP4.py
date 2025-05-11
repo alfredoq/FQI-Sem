@@ -6,6 +6,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem import Descriptors
 from rdkit.ML.Descriptors import MoleculeDescriptors
+from rdkit.Chem import inchi, Crippen, Lipinski, Draw, rdDepictor
 from sklearn import datasets
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
@@ -21,7 +22,8 @@ import itables
 itables.init_notebook_mode()
 
 warnings.filterwarnings('ignore')
-
+from rdkit import RDLogger
+RDLogger.DisableLog('rdApp.*')
 
 def graficar_heatmap_pearson(df, columna_inicio, titulo='Heatmap de correlaciones de Pearson', figsize=(14,11)):
     """
@@ -89,7 +91,7 @@ def analizar_regresiones_lineales_simples(df, variable_objetivo, columnas_descri
         print('R\u00b2: %.3f' % est.rsquared)
         print('-' * 80)
         
-        resultados.append([var, est.rsquared, coef, std_err, intercepto])
+        resultados.append([var.replace('_norm', ''), round(est.rsquared,2), coef, std_err, intercepto])
 
     df_resultados = pd.DataFrame(resultados, columns=['Descriptor', 'R²', 'Coeficiente', 'Std err', 'Intercepto'])
     return df_resultados.sort_values(by='R²', ascending=False)
@@ -151,8 +153,8 @@ def evaluar_modelos_qsar(df, descriptores, y_col='IC50_value_nM_norm'):
         model = sm.OLS(y, X).fit()
 
         resultados.append({
-            "Variables": list(subset),
-            "R2": round(model.rsquared, 3),
+            "Variables": [col.replace('_norm', '') for col in subset],
+            "R2": round(model.rsquared, 2),
             "Coeficientes": [round(c, 4) for c in model.params[1:]],  # sin constante
             "Errores_Estandar": [round(se, 4) for se in model.bse[1:]],
             "Intercepto": round(model.params[0], 4),
@@ -160,7 +162,7 @@ def evaluar_modelos_qsar(df, descriptores, y_col='IC50_value_nM_norm'):
         })
 
     resultados_df = pd.DataFrame(resultados)
-    resultados_final = resultados_df.sort_values(by="R2", ascending=False)
+    resultados_final = resultados_df.sort_values(by=["R2", "Cantidad_de_variables"], ascending=[False,True])
     return resultados_final
 
 # Lista completa de descriptores disponibles
@@ -186,7 +188,7 @@ def calcular_descriptores_molecula(mol, seleccion=None):
                 resultados[nombre] = None
     return resultados
 
-def agregar_descriptores(df, smiles_col='canonical_smiles', seleccion=None, antes_de_columna=None):
+'''def agregar_descriptores(df, smiles_col='canonical_smiles', seleccion=None, antes_de_columna=None):
     """
     Agrega descriptores RDKit al DataFrame y los ubica antes de una columna específica si se indica.
 
@@ -227,7 +229,68 @@ def agregar_descriptores(df, smiles_col='canonical_smiles', seleccion=None, ante
     # Evitamos duplicados (por si los descriptores están también al final)
     nuevas_orden = [col for col in nuevas_orden if col in df_final.columns]
 
-    return df_final[nuevas_orden]
+    return df_final[nuevas_orden]'''
+
+
+# Diccionario: nombre en español → nombre real del descriptor
+mapa_descriptores = {
+    'MolWtSinH': 'HeavyAtomMolWt',
+    'CargaMax': 'MaxPartialCharge',
+    'CargaMin': 'MinPartialCharge',
+    'DensidadEstructural': 'FpDensityMorgan2',
+    'IndiceComplejidad': 'BertzCT',
+    'AreaAccesibleSolvente': 'LabuteASA',
+    'RefractividadMol': 'MolMR',
+    'SuperficieElectronegativa': 'PEOE_VSA10',
+    'SuperficieHidrofobica': 'SlogP_VSA1',
+    'AreaSuperficial': 'EState_VSA7',
+    'AreaRefractiva': 'SMR_VSA6',
+    'DistribucionElectronica': 'VSA_EState3'
+}
+
+def agregar_descriptores(df, smiles_col='canonical_smiles', seleccion=None, antes_de_columna=None):
+    """
+    Agrega descriptores RDKit al DataFrame, usando nombres en español o reales.
+
+    Parámetros:
+        df (DataFrame): Debe contener una columna con SMILES.
+        smiles_col (str): Nombre de la columna con SMILES.
+        seleccion (list): Lista de nombres en español definidos en `mapa_descriptores`.
+        antes_de_columna (str): Columna antes de la cual insertar los descriptores.
+
+    Retorna:
+        DataFrame con columnas agregadas y renombradas.
+    """
+    # Traducción a nombres reales
+    if seleccion:
+        seleccion_real = [mapa_descriptores.get(nombre, nombre) for nombre in seleccion]
+    else:
+        seleccion_real = None
+
+    resultados = []
+    for smi in df[smiles_col]:
+        mol = Chem.MolFromSmiles(smi)
+        if mol:
+            resultados.append(calcular_descriptores_molecula(mol, seleccion=seleccion_real))
+        else:
+            resultados.append({desc: None for desc in seleccion_real})
+
+    df_desc = pd.DataFrame(resultados, index=df.index)
+
+    # Renombrar columnas si se usaron nombres amigables
+    if seleccion:
+        renombre = {v: k for k, v in mapa_descriptores.items() if v in df_desc.columns}
+        df_desc.rename(columns=renombre, inplace=True)
+
+    # Insertar antes de una columna específica si se indica
+    if antes_de_columna and antes_de_columna in df.columns:
+        idx = df.columns.get_loc(antes_de_columna)
+        df_final = pd.concat([df.iloc[:, :idx], df_desc, df.iloc[:, idx:]], axis=1)
+    else:
+        df_final = pd.concat([df, df_desc], axis=1)
+
+    return df_final
+
 
 def normalizar_columnas_seleccionadas(df, columnas, metodo="minmax"):
     """
@@ -258,3 +321,47 @@ def normalizar_columnas_seleccionadas(df, columnas, metodo="minmax"):
 
     # Combinar con el DataFrame original
     return pd.concat([df, df_scaled], axis=1)
+
+def mostrar_moleculas_por_id(df, ids_chembl, grupo_funcional_smiles, mols_per_row=5):
+    """
+    Muestra moléculas seleccionadas por ChEMBL ID, alineadas según un grupo funcional, en el orden provisto.
+
+    Parámetros:
+        df (DataFrame): Contiene columnas 'canonical_smiles', 'molecule_chembl_id', 'IC50_value_nM', 'nombre_comercial'.
+        ids_chembl (list): Lista ordenada de ChEMBL IDs de las moléculas a mostrar.
+        grupo_funcional_smiles (str): SMILES del grupo funcional a usar como plantilla de alineación.
+        mols_per_row (int): Cantidad de moléculas por fila.
+        
+    """
+    template = Chem.MolFromSmiles(grupo_funcional_smiles)
+    rdDepictor.Compute2DCoords(template)
+
+    mols, legends = [], []
+
+    for chembl_id in ids_chembl:
+        row = df[df['molecule_chembl_id'] == chembl_id]
+        if row.empty:
+            continue
+        row = row.iloc[0]
+        mol = Chem.MolFromSmiles(row['canonical_smiles'])
+        if mol:
+            try:
+                rdDepictor.Compute2DCoords(mol)
+                rdDepictor.GenerateDepictionMatching2DStructure(mol, template)
+            except:
+                pass
+
+            mols.append(mol)
+
+            ic50 = row.get('IC50_value_nM', 'NA')
+            nombre_com = row.get('nombre_comercial', 'NA')
+            legend = f"{chembl_id} ({nombre_com})\nIC50: {ic50:.2f} nM" if pd.notna(nombre_com) else f"{chembl_id}\nIC50: {ic50:.2f} nM"
+            legends.append(legend)
+
+    if not mols:
+        print("No se encontraron moléculas válidas para mostrar.")
+        return
+
+    
+    img = Draw.MolsToGridImage(mols, legends=legends, molsPerRow=mols_per_row, subImgSize=(300, 300), useSVG=False)
+    display(img)

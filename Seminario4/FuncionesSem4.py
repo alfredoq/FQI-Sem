@@ -37,6 +37,8 @@ def buscar_info_nombre_comercial(nombre):
     columnas_clave = ['pref_name', 'molecule_chembl_id', 'first_approval', 'max_phase', 'indication_class', 'molecule_structures']
     otras_columnas = [col for col in df.columns if col not in columnas_clave]
     df = df[columnas_clave + otras_columnas]
+    columnas_innecesarias = ["molecule_structures","cross_references","molecule_hierarchy","molecule_synonyms"]
+    df = df.drop(columns=columnas_innecesarias)
 
     return df
 

@@ -122,7 +122,7 @@ def obtener_combinaciones_validas(df, columnas, umbral=0.6):
 
     combinaciones_validas = []
     
-    for r in range(1, len(columnas)+1):
+    for r in range(1, 7):
         for subset in itertools.combinations(columnas, r):
             if correlaciones_validas(subset, pearsoncorrpost):
                 combinaciones_validas.append(subset)
